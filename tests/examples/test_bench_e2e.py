@@ -7,6 +7,8 @@ key, no network); the server, governor, ledger, store, and agent loop are all re
 
 from __future__ import annotations
 
+import functools
+
 import pytest
 
 pytestmark = pytest.mark.e2e
@@ -37,7 +39,7 @@ def _run(client, *, intent="demo", user_dims=None):
     return resp.json()
 
 
-def _client(monkeypatch, tmp_path, policies, budgets=(), model=None):
+def _client(monkeypatch, tmp_path, policies, budgets=(), model=None, agent_dims=None):
     db = str(tmp_path / "bench.db")
     monkeypatch.setenv("TOKENOPS_DB", db)
     monkeypatch.delenv("TOKENOPS_URL", raising=False)
@@ -60,6 +62,11 @@ def _client(monkeypatch, tmp_path, policies, budgets=(), model=None):
         return ("summary", TokenUsage(), [], 0)
 
     monkeypatch.setattr(srv, "delegate_summarize", _fake_delegate)
+    if agent_dims is not None:
+        # §1: the agent owns user_dims — it declares them on instrument_app, not the client.
+        monkeypatch.setattr(
+            srv, "instrument_app", functools.partial(srv.instrument_app, user_dims=agent_dims)
+        )
     return srv, TestClient(srv.build_app())
 
 
@@ -180,6 +187,7 @@ def test_tool_output_cap_substitutes_result(monkeypatch, tmp_path):
 
 # 5) custom tag flows onto the persisted RunRecord (segmentation backbone)
 def test_run_dims_persisted_for_segmentation(monkeypatch, tmp_path):
+    """The agent declares the tag; the client may only fill allow-listed gaps (§1)."""
     import os
 
     from tokenops.control.store import Store
@@ -189,11 +197,13 @@ def test_run_dims_persisted_for_segmentation(monkeypatch, tmp_path):
         tmp_path,
         [PolicyInstance(id="p", template="step_cap", params={"max_steps": 2}, agent="research")],
         model=_always_search,
+        agent_dims={"team": "growth"},
     )
-    body = _run(client, user_dims={"user_id": "alice", "team": "growth"})
+    body = _run(client, user_dims={"user_id": "alice", "team": "spoofed"})
     run_id = body["run_id"]
     s = Store(os.environ["TOKENOPS_DB"], auto_seed=False)
     rec = s.get_run(run_id)
-    assert rec.dims.get("team") == "growth"  # custom tag persisted on the run
+    assert rec.dims["team"] == "growth"  # agent tag persisted — client cannot overwrite it
+    assert rec.dims["user_id"] == "alice"  # allow-listed key fills a gap the agent left
     assert "team" in s.run_tag_keys()  # dashboard can group by it
     s.close()

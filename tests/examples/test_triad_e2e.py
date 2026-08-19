@@ -182,7 +182,8 @@ def test_triad_pipeline_completes_with_ledger(monkeypatch, tmp_path):
         if hasattr(store, "get_run_registration")
         else store.resolve_run(body["run_id"])
     )
-    assert reg.intent == "triad-demo"
+    # §1: the agent owns intent — the client's "triad-demo" in the body is ignored.
+    assert reg.intent == "triad_plan"
     store.close()
 
 
@@ -203,15 +204,12 @@ def test_triad_cost_not_double_counted_without_parent_rollup(monkeypatch, tmp_pa
     )
     _research_search_then_finish.n = 0
 
-    # Deterministic pricing: 1 micro per token (patch each server module bind).
-    from examples.triad.planner import server as planner_srv
-    from examples.triad.researcher import server as researcher_srv
-    from examples.triad.writer import server as writer_srv
+    # Deterministic pricing: 1 micro per token. tokenops_run builds the price book, so
+    # one patch there covers all three servers.
+    from tokenops.control import run as tokenops_run_mod
 
     unit_price = lambda: lambda provider, model, usage: int(usage.input) + int(usage.output)
-    monkeypatch.setattr(planner_srv, "build_price_book", unit_price)
-    monkeypatch.setattr(researcher_srv, "build_price_book", unit_price)
-    monkeypatch.setattr(writer_srv, "build_price_book", unit_price)
+    monkeypatch.setattr(tokenops_run_mod, "build_price_book", unit_price)
 
     planner, _researcher, _writer = _wire_apps(monkeypatch)
 
