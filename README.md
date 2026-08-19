@@ -44,7 +44,7 @@ TokenOps is two layers that share one artifact, the **run**: a control plane tha
 ```mermaid
 flowchart LR
     subgraph PLANE["Control plane (:7700)"]
-        R["POST /v1/runs"] --> DB[("SQLite TOKENOPS_DB<br/>registrations · budgets · policies · ledger")]
+        R["HTTP API<br/>/v1/runs · run records · ledger · governance"] --> DB[("SQLite TOKENOPS_DB<br/>registrations · budgets · policies · ledger")]
         UI["Admin + Dashboard"] --> DB
     end
 
@@ -62,7 +62,7 @@ flowchart LR
 
 | Piece | Owns | Does not own |
 |---|---|---|
-| **Control plane** (`python -m tokenops.server`) | `POST /v1/runs`, shared SQLite, Admin/Dashboard | Agent loops, LLM calls, tools |
+| **Control plane** (`python -m tokenops.server`) | [Plane API](docs/control-plane-deploy.md#plane-api) — registration, run records, ledger, governance config — shared SQLite, Admin/Dashboard | Agent loops, LLM calls, tools |
 | **SDK (in agents)** | `tokenops_run`, `wrap_complete`, ledger/policies, Chronicle crossing hook | Ad-hoc run IDs; mounting `/v1/runs` when `TOKENOPS_URL` is set |
 
 Chronicle records decision boundaries; TokenOps attaches as the cost/governance observer on live crossings. See [Chronicle](https://github.com/theagentplane/chronicle) for record-and-replay.
@@ -89,15 +89,42 @@ See [`RELEASING.md`](RELEASING.md) for releases.
 
 ## Quick start
 
+### See a governed run end to end
+
 ```bash
 make install
-cp .env.example .env   # optional API keys for demos / your agents
+cp .env.example .env    # add OPENAI_API_KEY
 
-make db-reset          # optional: clean SQLite + seed governance from default.yaml
-make run               # control plane :7700 + Admin/Dashboard :8501
+TOKENOPS_CONFIG=examples/config/default.yaml make db-reset   # clean SQLite + seed the ten policies
+make demo               # plane :7700 · research :8001 · summarize :8002 · Dashboard :8501
 ```
 
-Wire governance into an agent: `instrument_app` once, then `tokenops_run` per request.
+`make demo` blocks. Nothing in the Dashboard starts a run — it is read-only — so send the
+entry agent a task from a second shell:
+
+```bash
+curl -s -X POST localhost:8001/v1/tasks -H 'content-type: application/json' -d '{
+  "type":"TaskRequest","task":"What is enterprise SaaS seat-based pricing?",
+  "user":"me","intent":"research","user_dims":{"tenant":"acme"},
+  "bench":{"corpus_profile":"healthy"}}'
+```
+
+You get back `{"status":"completed","run_id":"run_…","cost_micros":…}`. Open
+**http://localhost:8501** — the run is there with spend, steps, and the governance trace,
+booked once across both agents.
+
+Prefer clicking to curling? The Chat page lives in the bench UI. Run it beside the demo —
+`examples/` is not part of the installed wheel, so it needs the repo root on `PYTHONPATH`:
+
+```bash
+PYTHONPATH=. streamlit run examples/ui/app.py --server.port 8502
+```
+
+Plane + UI only, no agents: `make run`.
+
+### Wire governance into your own agent
+
+`instrument_app` once, then `tokenops_run` per request.
 The UI sends **task only**; intent / mode come from agent config on `instrument_app`.
 
 ```python
@@ -125,14 +152,18 @@ instrument_app(app, service="planner", intent="triad_plan",
 `bind_request_context(RequestContext(headers=..., payload=..., service=...))` then
 `with tokenops_run():`, or pass those kwargs explicitly to `tokenops_run`.
 
-Point agents at the plane and share one DB:
+Point agents at the plane. With `TOKENOPS_URL` set, an agent opens no SQLite of its own —
+registration, ledger, governance config, and run records all go to the plane over HTTP:
 
 ```bash
-export TOKENOPS_URL=http://localhost:7700
-export TOKENOPS_DB=tokenops.db   # plane + all agents
-make control-plane               # :7700
-make ui                          # Admin + Dashboard :8501
+export TOKENOPS_URL=http://localhost:7700   # agents: plane base URL
+export TOKENOPS_DB=tokenops.db              # plane only: the SQLite it owns
+make control-plane                          # :7700
+make ui                                     # Admin + Dashboard :8501
 ```
+
+Single process (tests, one-agent scripts): drop `TOKENOPS_URL` or set `TOKENOPS_EMBEDDED=1`
+and the SDK uses an in-process `Store` on `TOKENOPS_DB` instead.
 
 New here? [Onboarding guide](docs/guides/onboarding.md) (prereqs, bare-min integrate, FAQ, current limits).
 

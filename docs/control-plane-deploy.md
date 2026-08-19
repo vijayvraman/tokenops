@@ -7,11 +7,32 @@ Standalone TokenOps plane + SDK. Agent demos and compose overlays live in-repo u
 
 | Service | Command | Role |
 |---------|---------|------|
-| `tokenops` | `python -m tokenops.server` | Plane: `POST /v1/runs`, `GET /health`, shared SQLite |
+| `tokenops` | `python -m tokenops.server` | Plane: [HTTP API](#plane-api), shared SQLite |
 | `ui` (optional profile) | `streamlit run src/tokenops/ui/app.py` | Admin + Dashboard |
 
 Agents in your app (or `examples/`) set `TOKENOPS_URL=http://tokenops:7700` so they
 **do not** mount `/v1/runs` locally.
+
+## Plane API
+
+With `TOKENOPS_URL` set, an agent's `ControlPlaneClient.require_store()` is an `HttpStore`
+that opens no SQLite of its own — it calls the plane for everything. The plane must
+therefore serve all of it, or ledger writes and dashboard rows are silently lost:
+
+| Route | Purpose |
+|-------|---------|
+| `GET /health` | Liveness |
+| `POST /v1/runs` | Run registration (intent, user_dims, mode) |
+| `GET /v1/runs/{run_id}/registration` | Resolve frozen trace dims |
+| `GET /v1/governance/{agent}` | Config `build_governor` consumes (blank agent = global) |
+| `PUT`/`PATCH`/`GET /v1/run-records[/{run_id}]` | Dashboard run rows |
+| `POST /v1/ledger/spent/add`, `GET /v1/ledger/spent` | Shared spend accumulators |
+| `POST /v1/ledger/inflight/{admit,complete}`, `GET /v1/ledger/inflight` | Concurrency |
+| `POST /v1/ledger/halt/{mark,clear}`, `GET /v1/ledger/halt/{run_id}` | Halt flags |
+| `PUT`/`GET /v1/segments`, `/v1/budgets`, `GET /v1/policies` | Governance objects |
+
+The trajectory-hint index stays plane-local: `HttpStore` no-ops those calls, so
+`trajectory_hint` does not fire for agents in remote mode.
 
 ## Env
 

@@ -156,7 +156,7 @@ Ledger cost may be zero, but policies still care about steps, concurrency, tool 
 
 TokenOps is **0.x / draft**. Honest limits (details and status matrix: [control-plane status](../control-plane-status.md); high-level plan: [README Roadmap](../../README.md#roadmap)):
 
-- **Not a full remote observe/decide plane yet.** Agents still enforce in-process with a shared SQLite ledger; register is remote when `TOKENOPS_URL` is set. A fatter plane (remote observe/decide) is on the roadmap.
+- **Not a full remote observe/decide plane yet.** Detect/decide still run in-process in the agent; with `TOKENOPS_URL` set, registration, ledger, governance config, and run records go to the plane over HTTP (it owns the SQLite). A fatter plane (remote observe/decide) is on the roadmap.
 - **Not automatic for arbitrary frameworks.** FastAPI gets `instrument_app`; other stacks wire `tokenops_run` / `RequestContext` yourself — no Flask/Django/etc. middleware ships today.
 - **Not automatic tool wrapping.** Tools are not governed unless you use Chronicle `@boundary` (and the crossing hook, installed by `instrument_app` / `tokenops.init`).
 - **Not per-user / tag budget seed by default.** Registration stores `user_dims`, but seeded governance is **run-scoped** today; segment-scoped budgets are WIP.
