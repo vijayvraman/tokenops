@@ -27,7 +27,7 @@ Cap spend and steer behavior across a whole agent workflow — not per request �
 
 TokenOps is a **control plane + SDK** for agent stacks. Entry agents register a run; every LLM and tool crossing shares one `run_id` and one ledger. Policies can halt, mutate, or inject before the next call executes — so a research → summarize → review pipeline stays inside a single budget even across processes.
 
-**[Why](#why-tokenops) · [Architecture](#architecture) · [Install](#install) · [Quick start](#quick-start) · [Onboarding](docs/guides/onboarding.md) · [Demos](#demos) · [Comparison](#how-tokenops-compares) · [Make targets](#make-targets) · [Roadmap](#roadmap)**
+**[Why](#why-tokenops) · [Architecture](#architecture) · [Policies](#policies) · [Install](#install) · [Quick start](#quick-start) · [Onboarding](docs/guides/onboarding.md) · [Demos](#demos) · [Comparison](#how-tokenops-compares) · [Make targets](#make-targets) · [Roadmap](#roadmap)**
 
 ## Why TokenOps
 
@@ -66,6 +66,30 @@ flowchart LR
 | **SDK (in agents)** | `tokenops_run`, `wrap_complete`, ledger/policies, Chronicle crossing hook | Ad-hoc run IDs; mounting `/v1/runs` when `TOKENOPS_URL` is set |
 
 Chronicle records decision boundaries; TokenOps attaches as the cost/governance observer on live crossings. See [Chronicle](https://github.com/theagentplane/chronicle) for record-and-replay.
+
+## Policies
+
+A policy is a `(detect, fix)` pair: the detector reads the ledger and raises a `Signal`, the
+policy turns it into one `Action`, and the OUT connector applies it before the next call
+runs. Ten are seeded by `make db-reset`; `trajectory_hint` is opt-in.
+
+| Policy | Fires when | Action |
+|---|---|---|
+| [`cost_budget`](docs/policies/cost_budget.md) | after a step — `spent(segment) ≥ limit` | **HALT** |
+| [`pre_call_worst_case`](docs/policies/pre_call_worst_case.md) | before dispatch — `spent + priced worst case ≥ budget` | **MUTATE** (cap `max_output` so the priced cap is the enforced one), then **HALT** if it still breaches |
+| [`step_cap`](docs/policies/step_cap.md) | after a step — `steps(run) ≥ max_steps` | **HALT** |
+| [`concurrency_cap`](docs/policies/concurrency_cap.md) | before dispatch — `inflight(segment) ≥ max_concurrent` | **REJECT** (default) or **QUEUE** under `mode: queue` — both raise `Throttled` → HTTP 429 with `Retry-After` |
+| [`tool_fix`](docs/policies/tool_fix.md) | after a tool step — name not in registry, or args fail schema | **INJECT** a synthetic error result (`did_you_mean`, `available_tools`) in place of the call; **HALT** after K identical failures |
+| [`tool_output_cap`](docs/policies/tool_output_cap.md) | after a tool step — estimated payload ≥ `cap_tokens` | **INJECT** a descriptor + handle in place of the payload |
+| [`progress_guard`](docs/policies/progress_guard.md) | after a step — same signature/result repeated, or SimHash near-duplicate | **INJECT** a factual correction; **HALT** after `max_corrections` |
+| [`cost_guard`](docs/policies/cost_guard.md) | after a step — `spent/limit ≥ threshold`, or spend velocity | **INJECT** a "keep output minimal" instruction, or **MUTATE** to `downgrade_to` under `mode: downgrade` |
+| [`context_compaction`](docs/policies/context_compaction.md) | before dispatch — `est_input ≥ ctx_max` | **MUTATE** the prompt (reorder for cache reuse, dedup, summarize); **ALLOW** + telemetry only when `has_hook: false` |
+| [`output_runaway`](docs/policies/output_runaway.md) | after an LLM step — n-gram repetition or single-token domination | **RETRY** with tighter penalties up to `max_retries`, then **INJECT** an error; **CANCEL** tears down the stream mid-flight under `wrap_stream` |
+| [`trajectory_hint`](docs/policies/trajectory_hint.md) | before dispatch at step 0 — a prior successful run matches | **INJECT** a compressed playbook. Never halts |
+
+`HALT` and `CANCEL` stop the run; everything else heals or bounds it and the call proceeds.
+Registering a run with `mode: preview` records the same decisions without applying them.
+Params come from the seed YAML and are editable in Admin (:8501).
 
 ## Install
 

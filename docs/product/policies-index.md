@@ -8,7 +8,7 @@ Canonical per-policy docs live under [`docs/policies/`](../policies/). Product o
 | `pre_call_worst_case` | [pre_call_worst_case.md](../policies/pre_call_worst_case.md) |
 | `step_cap` | [step_cap.md](../policies/step_cap.md) |
 | `concurrency_cap` | [concurrency_cap.md](../policies/concurrency_cap.md) |
-| `tool_freq` | [tool_freq.md](../policies/tool_freq.md) |
+| `tool_fix` | [tool_fix.md](../policies/tool_fix.md) |
 | `tool_output_cap` | [tool_output_cap.md](../policies/tool_output_cap.md) |
 | `progress_guard` | [progress_guard.md](../policies/progress_guard.md) |
 | `cost_guard` | [cost_guard.md](../policies/cost_guard.md) |
