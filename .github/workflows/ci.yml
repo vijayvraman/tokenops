@@ -43,3 +43,29 @@ jobs:
 
       - name: Pytest
         run: python -m pytest -q
+
+  example-e2e:
+    # The example benches (tests/examples) are excluded from the default pytest run by
+    # `addopts = -m 'not e2e and not live'`, so without this job they drift silently against
+    # SDK changes. Extras match `make install`, which is what these are run with locally —
+    # the current set does not import ddgs/langchain, but the brief bench would. LLM calls
+    # and the search tool are mocked, so no API key is required.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -e ".[dev,examples]"
+
+      - name: Pytest (examples e2e)
+        run: python -m pytest -m e2e -q
