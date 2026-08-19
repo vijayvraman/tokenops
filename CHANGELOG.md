@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The control plane now serves the routes `HttpStore` calls, not just `POST /v1/runs`:
+  registration lookup, run records, the shared ledger (spend / inflight / halt),
+  governance config, and segments/budgets/policies. With `TOKENOPS_URL` set (as in
+  `make demo`) an agent could register a run and nothing else — every ledger write and
+  dashboard update 404'd, so runs sat at "running" with zero cost.
+- `HttpStore` no longer swallows a 404 as a successful no-op; a missing plane route
+  raises instead of silently dropping the write.
+
 ## [0.2.0] - 2026-08-14
 
 ### Added

@@ -1,4 +1,4 @@
-"""FastAPI control-plane application (registration + health; observe later)."""
+"""FastAPI control-plane application (registration, ledger, run records, governance)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from tokenops import __version__
 from tokenops.control.http import mount_run_registration
 from tokenops.control.store import Store
+from tokenops.server.plane_api import mount_plane_api
 
 
 def create_app(store: Store | None = None) -> FastAPI:
@@ -18,9 +19,11 @@ def create_app(store: Store | None = None) -> FastAPI:
 
     * ``POST /v1/runs`` — run registration (intent, user_dims, mode)
     * ``GET /health`` — liveness
+    * the plane API (:func:`~tokenops.server.plane_api.mount_plane_api`) — the ledger,
+      run-record, and governance routes an agent's ``HttpStore`` calls once it is
+      pointed here with ``TOKENOPS_URL``
 
-    Future routes (observe / governance remote) can mount here without changing
-    agent SDKs beyond pointing ``TOKENOPS_URL`` at this service.
+    Agent SDKs need nothing beyond pointing ``TOKENOPS_URL`` at this service.
     """
     store = store or Store(os.environ.get("TOKENOPS_DB", "tokenops.db"))
 
@@ -32,8 +35,6 @@ def create_app(store: Store | None = None) -> FastAPI:
         return {"status": "ok", "service": "tokenops-control-plane"}
 
     mount_run_registration(app, store)
-
-    # Placeholder for future plane APIs (observe, governance admin over HTTP, etc.).
-    # Agents keep using ControlPlaneClient; expand the plane surface here.
+    mount_plane_api(app, store)
 
     return app

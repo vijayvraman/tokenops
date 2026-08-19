@@ -38,8 +38,8 @@ class HttpStore:
         if response.status_code == 409:
             body = response.json()
             raise RunAlreadyRegisteredError(body.get("error", "run already registered"))
-        if response.status_code == 404:
-            return response
+        # 404 is not swallowed: every route here exists on the plane, so a 404 means the
+        # plane is older than this client, and a silent no-op would just lose the write.
         response.raise_for_status()
         return response
 
