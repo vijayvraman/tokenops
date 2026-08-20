@@ -92,6 +92,20 @@ def test_run_record_create_update_and_read(plane):
     assert [r.run_id for r in http_store.list_runs()] == ["r2"]
 
 
+def test_two_agents_accumulate_over_http(plane):
+    """The plane sends events as a JSON string — the merge must survive that encoding."""
+    http_store, store = plane
+    http_store.create_run(RunRecord(run_id="r6", agent="scout"))
+    http_store.update_run("r6", steps=2, governance_events=[{"policy": "cost_guard"}])
+    http_store.create_run(RunRecord(run_id="r6", agent="editor"))
+    http_store.update_run("r6", steps=3, governance_events=[{"policy": "cost_budget"}])
+
+    rec = store.get_run("r6")
+    assert rec.agent == "scout"
+    assert rec.steps == 5
+    assert [e["policy"] for e in rec.governance_events] == ["cost_guard", "cost_budget"]
+
+
 def test_get_missing_run_record_returns_none(plane):
     http_store, _ = plane
     assert http_store.get_run("missing") is None

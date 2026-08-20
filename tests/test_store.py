@@ -220,3 +220,43 @@ def test_dims_migration_on_legacy_db(tmp_path):
     s.create_run(RunRecord(run_id="new", agent="research", dims={"team": "x"}))
     assert s.get_run("new").dims == {"team": "x"}
     s.close()
+
+
+def test_pipeline_agents_share_one_run_row(store):
+    """A run is the whole workflow: delegates contribute to the row, never overwrite it.
+
+    Scout → Analyst → Editor all call create_run/update_run with the same run_id. Before
+    this, the last writer won: the row was labelled `editor`, carried only the editor's
+    step count, and showed only the editor's governance events.
+    """
+    store.register_run(RunRegistration(run_id="brief-1", intent="brief_scout"))
+
+    for agent, steps, event in (
+        ("scout", 3, {"policy": "pre_call_worst_case", "kind": "mutate"}),
+        ("analyst", 2, {"policy": "cost_guard", "kind": "inject"}),
+        ("editor", 1, {"policy": "cost_budget", "kind": "halt"}),
+    ):
+        store.create_run(RunRecord(run_id="brief-1", agent=agent, status="running", task="brief"))
+        store.update_run("brief-1", steps=steps, governance_events=[event])
+
+    rec = store.get_run("brief-1")
+    assert rec.agent == "brief_scout"  # entry label, not whichever agent finished last
+    assert rec.steps == 6  # 3 + 2 + 1, not the editor's 1
+    assert [e["policy"] for e in rec.governance_events] == [
+        "pre_call_worst_case",
+        "cost_guard",
+        "cost_budget",
+    ]
+
+
+def test_delegate_cannot_rewind_a_finished_run(store):
+    """A slow delegate's create_run must not flip a halted run back to running."""
+    store.create_run(RunRecord(run_id="r-halt", agent="scout", status="running"))
+    store.update_run("r-halt", status="halted", halt_reason="budget exhausted")
+
+    store.create_run(RunRecord(run_id="r-halt", agent="editor", status="running"))
+
+    rec = store.get_run("r-halt")
+    assert rec.status == "halted"
+    assert rec.halt_reason == "budget exhausted"
+    assert rec.agent == "scout"

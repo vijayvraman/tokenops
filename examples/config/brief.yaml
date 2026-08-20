@@ -29,14 +29,18 @@ agents:
 governance:
   budgets:
     - id: run_llm_cap
-      limit_micros: 400000          # $0.40 per run
+      limit_micros: 300             # Demo setting to force a halt; $0.40 (400000) is the real
+                                    # value. A clean run spends ~503 micros, so cost_budget
+                                    # backstops here even if the pre-call gate lets calls through.
       dimension: run
   policies:
     cost_budget:
       budget: run_llm_cap
     pre_call_worst_case:
       budget: run_llm_cap
-      default_max_output: 1024
+      default_max_output: 64       # Demo: with 1024 the projection is ~764 micros, so any cap
+                                   # small enough to trip would halt call one. At 64 the
+                                   # projection is ~188 and the cap binds mid-run instead.
     step_cap:
       max_steps: 14
     concurrency_cap:
@@ -53,7 +57,8 @@ governance:
       max_corrections: 2
     cost_guard:
       budget: run_llm_cap
-      threshold: 0.8
+      threshold: 0.2               # 0.8 of a 1000-micro cap is never reached; 0.2 fires the
+                                   # INJECT after the first call, before the halt.
       mode: minimize
     context_compaction:
       ctx_max: 100000

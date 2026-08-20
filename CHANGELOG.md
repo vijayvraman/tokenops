@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dashboard update 404'd, so runs sat at "running" with zero cost.
 - `HttpStore` no longer swallows a 404 as a successful no-op; a missing plane route
   raises instead of silently dropping the write.
+- Multi-agent runs no longer overwrite each other's dashboard row. `create_run` is an
+  upsert that keeps the entry agent's label and cannot rewind a finished run, and
+  `update_run` appends `governance_events` and adds `steps` instead of replacing them —
+  so a three-agent pipeline shows all three traces and the whole step count rather than
+  whichever agent finished last.
 
 ## [0.2.0] - 2026-08-14
 

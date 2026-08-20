@@ -459,12 +459,39 @@ class Store:
 
     @_locked
     def create_run(self, rec: RunRecord) -> RunRecord:
+        """Create the dashboard row, or join the one this run already has.
+
+        A run is the whole workflow, so every agent in a pipeline calls this with the same
+        ``run_id`` — the entry agent first, then each delegate. It is an upsert, not a
+        REPLACE: the first writer owns ``agent``, ``task``, ``dims`` and ``started_at``, and
+        a delegate joining later cannot rename the run, rewind it to ``running``, or wipe
+        the governance events its siblings already recorded.
+        """
         if not rec.started_at:
             rec.started_at = time.time()
         self._db.execute(
-            "REPLACE INTO runs(run_id, agent, status, parent_run, parent_span, halt_reason, detector, "
-            "cost_micros, steps, started_at, ended_at, task, dims) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO runs(run_id, agent, status, parent_run, parent_span, halt_reason, "
+            "detector, cost_micros, steps, started_at, ended_at, task, dims) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(run_id) DO UPDATE SET "
+            # agent and governance_events are absent on purpose — first writer keeps the
+            # label, and events only ever accumulate through update_run.
+            "  status = CASE WHEN runs.status IN ('completed','halted','throttled','error') "
+            "                 AND excluded.status = 'running' THEN runs.status "
+            "            ELSE excluded.status END,"
+            "  parent_run = COALESCE(runs.parent_run, excluded.parent_run),"
+            "  parent_span = COALESCE(runs.parent_span, excluded.parent_span),"
+            "  halt_reason = COALESCE(excluded.halt_reason, runs.halt_reason),"
+            "  detector = COALESCE(excluded.detector, runs.detector),"
+            "  cost_micros = MAX(runs.cost_micros, excluded.cost_micros),"
+            "  steps = MAX(runs.steps, excluded.steps),"
+            "  started_at = CASE WHEN runs.started_at > 0 THEN runs.started_at "
+            "               ELSE excluded.started_at END,"
+            "  ended_at = COALESCE(excluded.ended_at, runs.ended_at),"
+            # register_run seeds task/dims from the registration, so a real create_run must
+            # still be able to write over that placeholder — only identity is frozen.
+            "  task = COALESCE(excluded.task, runs.task),"
+            "  dims = CASE WHEN excluded.dims IN ('', '{}') THEN runs.dims ELSE excluded.dims END",
             (
                 rec.run_id,
                 rec.agent,
@@ -486,13 +513,43 @@ class Store:
 
     @_locked
     def update_run(self, run_id: str, **fields) -> None:
+        """Write the finishing state of one agent's leg of the run.
+
+        Every field is a plain set except the two that are per-agent contributions to a
+        shared run: ``governance_events`` are **appended** and ``steps`` are **added**, so a
+        three-agent pipeline shows all three traces and the whole step count instead of
+        whichever agent happened to finish last. Each agent is expected to call this once
+        per leg; calling it twice for the same leg double-counts.
+        """
         if not fields:
             return
-        if "governance_events" in fields and not isinstance(fields["governance_events"], str):
-            fields["governance_events"] = json.dumps(fields["governance_events"])
-        cols = ", ".join(f"{k}=?" for k in fields)
-        self._db.execute(f"UPDATE runs SET {cols} WHERE run_id=?", (*fields.values(), run_id))
+        events = fields.pop("governance_events", None)
+        steps = fields.pop("steps", None)
+
+        assignments = [f"{k}=?" for k in fields]
+        params: list[Any] = list(fields.values())
+
+        if steps is not None:
+            assignments.append("steps = steps + ?")
+            params.append(int(steps))
+        if events is not None:
+            assignments.append("governance_events=?")
+            params.append(json.dumps(self._run_events(run_id) + _as_events(events)))
+
+        if not assignments:
+            return
+        self._db.execute(
+            f"UPDATE runs SET {', '.join(assignments)} WHERE run_id=?",
+            (*params, run_id),
+        )
         self._db.commit()
+
+    def _run_events(self, run_id: str) -> list[dict]:
+        """Governance events already recorded for *run_id* (siblings included)."""
+        row = self._db.execute(
+            "SELECT governance_events FROM runs WHERE run_id=?", (run_id,)
+        ).fetchone()
+        return _as_events(row[0]) if row else []
 
     @_locked
     def get_run(self, run_id: str) -> RunRecord | None:
@@ -920,6 +977,19 @@ def _policy(r: sqlite3.Row) -> PolicyInstance:
         segment_id=r["segment_id"],
         enabled=bool(r["enabled"]),
     )
+
+
+def _as_events(raw: object) -> list[dict]:
+    """Coerce a governance-events payload (JSON string or list) to a list."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        try:
+            loaded = json.loads(raw or "[]")
+        except json.JSONDecodeError:
+            return []
+        return list(loaded) if isinstance(loaded, list) else []
+    return list(raw) if isinstance(raw, (list, tuple)) else []
 
 
 def _run(r: sqlite3.Row) -> RunRecord:
