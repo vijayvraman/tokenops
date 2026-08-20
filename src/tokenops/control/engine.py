@@ -21,7 +21,7 @@ this is what makes HALT sticky and idempotent across A2A.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol, runtime_checkable
 
 from tokenops.control.core import (
@@ -176,7 +176,12 @@ class PreviewControls(ApplyControls):
 
 
 def policy_hint_from_reason(reason: str) -> str:
-    """Best-effort policy name for dashboard display."""
+    """Best-effort policy name from an action's reason text.
+
+    Fallback only: :class:`Action` now carries ``policy``, stamped by the Governor. This
+    stays for actions built outside the Governor (and older persisted rows), and it only
+    ever recognised three templates — the other eight showed as ``—``.
+    """
     r = reason.lower()
     if "worst-case" in r or "bounding to" in r or "output cap" in r:
         return "pre_call_worst_case"
@@ -197,7 +202,7 @@ def governance_events_payload(controls: ApplyControls | PreviewControls) -> list
         row: dict[str, Any] = {
             "kind": action.kind.value,
             "reason": action.reason,
-            "policy": policy_hint_from_reason(action.reason),
+            "policy": action.policy or policy_hint_from_reason(action.reason),
         }
         if action.inject_message:
             row["message"] = action.inject_message
@@ -293,6 +298,10 @@ class Governor:
             if policy is None:
                 continue  # a detector with no paired policy is observe-only telemetry
             action = policy.decide(sig, self.ledger)
+            if action.policy is None:
+                # Detector and policy are registered as a named pair, so the deciding
+                # policy is known here — no need to guess it from the reason string later.
+                action = replace(action, policy=policy.name)
             if action.kind is ActionKind.HALT and self.enforce:
                 # set the durable flag BEFORE applying, so the kill switch survives a
                 # swallowed raise. Idempotent — marking twice is harmless.

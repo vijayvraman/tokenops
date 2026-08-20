@@ -361,3 +361,48 @@ def test_triad_cost_budget_halts_on_researcher(monkeypatch, tmp_path):
     body = resp.json()
     assert body["status"] == "halted"
     assert "budget" in (body.get("halt_reason") or "").lower()
+
+
+def test_downstream_agent_records_its_governance_trace(monkeypatch, tmp_path):
+    """A delegate's actions must reach the run row — the Dashboard reads nothing else.
+
+    The researcher halts on its own step_cap. Before this, only entry agents passed
+    governance_events/detector to update_run, so anything a delegate's governor did was
+    applied but never recorded: the UI showed a halted run it could not attribute, and a
+    cost_guard INJECT inside a delegate was invisible.
+    """
+    _seed(
+        tmp_path,
+        monkeypatch,
+        [
+            PolicyInstance(
+                id="p-res", template="step_cap", params={"max_steps": 2}, agent="researcher"
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        search_core,
+        "search",
+        lambda q, profile="healthy": SearchResult(
+            query=q, snippet="tiny", completeness=0.2, source="test"
+        ),
+    )
+    from examples.triad.researcher import server as researcher_srv
+
+    monkeypatch.setattr(researcher_srv, "complete", _always_search)
+    researcher = TestClient(researcher_srv.build_app())
+
+    run_id = ControlPlaneClient.from_env().register_run(intent="scoped")["run_id"]
+    resp = researcher.post(
+        "/v1/tasks",
+        json={"task": "pricing", "questions": ["q1"], "bench": {"corpus_profile": "healthy"}},
+        headers={RUN_ID_HEADER: run_id},
+    )
+    assert resp.json()["status"] == "halted"
+
+    store = Store(tmp_path / "triad.db", auto_seed=False)
+    rec = store.get_run(run_id)
+    assert rec.status == "halted"
+    assert rec.detector, "halt not attributed to a detector on the run row"
+    assert any(ev.get("kind") == "halt" for ev in rec.governance_events), rec.governance_events
+    store.close()

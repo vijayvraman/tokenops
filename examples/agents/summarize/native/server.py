@@ -12,6 +12,8 @@ from examples.app_config import load_config
 from tokenops import ControlPlaneClient, instrument_app, tokenops_run
 from tokenops.control import (
     Halt,
+    governance_events_payload,
+    halt_detector_from_events,
     with_governance_errors,
     wrap_complete,
 )
@@ -76,13 +78,19 @@ def build_app():
             except Throttled as thr:
                 status, halt_reason = "throttled", thr.action.reason
             finally:
+                # This agent's leg of the run: without these the governor still steers the
+                # call, but the Dashboard shows no trace of it (events are appended per leg).
+                gov_events = governance_events_payload(controls)
+                detector = halt_detector_from_events(gov_events) if status == "halted" else None
                 client.update_run(
                     run_id,
                     status=status,
                     halt_reason=halt_reason,
+                    detector=detector,
                     cost_micros=governor.ledger.cost_micros(run_id),
                     steps=governor.ledger.step_count(run_id),
                     ended_at=time.time(),
+                    governance_events=gov_events,
                 )
 
             response = summarize_response(

@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dashboard update 404'd, so runs sat at "running" with zero cost.
 - `HttpStore` no longer swallows a 404 as a successful no-op; a missing plane route
   raises instead of silently dropping the write.
+- Downstream agents now report their governance to the run row. Only entry agents passed
+  `governance_events` / `detector` to `update_run`, so anything a delegate's governor did
+  was applied but never recorded — a `cost_guard` INJECT inside the analyst or editor was
+  invisible, and a halt inside a delegate could not be attributed.
+- `Action` carries the `policy` that decided it, stamped by the Governor from the routed
+  policy's name. The dashboard previously guessed it from the reason text, which matched
+  only three of the eleven templates; the other eight displayed as `—` with no detector.
 - Multi-agent runs no longer overwrite each other's dashboard row. `create_run` is an
   upsert that keeps the entry agent's label and cannot rewind a finished run, and
   `update_run` appends `governance_events` and adds `steps` instead of replacing them —

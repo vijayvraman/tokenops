@@ -220,6 +220,9 @@ class Action:
     kind: ActionKind
     run_id: str
     reason: str = ""
+    #: Policy that decided this action. Stamped by the Governor from the routed policy's
+    #: name, so the dashboard can attribute an action without parsing its reason text.
+    policy: str | None = None
     # MUTATE payloads
     downgrade_to: str | None = None
     max_output_tokens: int | None = None
